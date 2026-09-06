@@ -37,7 +37,9 @@ jobs:
       - run: npm ci
       - run: npm run check
       - name: Ensure the tag matches package.json
-        run: test "${GITHUB_REF_NAME#v}" = "$(node -p \"require('./package.json').version\")"
+        run: |
+          package_version="$(node -p "require('./package.json').version")"
+          test "${GITHUB_REF_NAME#v}" = "$package_version"
       - name: Create the installable tarball
         run: npm pack --pack-destination release
       - name: Write checksum
