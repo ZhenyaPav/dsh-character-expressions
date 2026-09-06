@@ -20,6 +20,20 @@ dsh plugin --profile web add ./
 dsh --profile web
 ```
 
+## Install a prebuilt GitHub Release
+
+Tagged releases are built and tested on GitHub-hosted Node 22 runners. Each
+release includes `dsh-deep-tavern-<version>.tgz` and `SHA256SUMS`; using the
+tarball avoids the Git dependency `prepare` step on the DSH server.
+
+```sh
+dsh plugin --profile web add https://github.com/ZhenyaPav/dsh-deep-tavern/releases/download/v<version>/dsh-deep-tavern-<version>.tgz
+```
+
+The backend classifier still uses `onnxruntime-node`. In profiles that block
+all dependency lifecycle scripts, approve that dependency through the profile's
+`pnpm-workspace.yaml` (or `pnpm approve-builds`) before installing.
+
 Open a workspace session, select **Character Chat** from the conversation-view tabs, then open **Settings → Character Chat** to upload expression images. The first model download starts when the bundle loads and is cached under `~/.dsh/models/deep-tavern` by default.
 
 ## Data and privacy
