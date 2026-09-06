@@ -16,14 +16,12 @@ export interface Config {
   enabled: boolean
   modelId: string
   rerollSameExpression: boolean
-  cacheDir?: string
 }
 
 export const Config: z<Config> = z.object({
   enabled: z.boolean().default(true),
   modelId: z.string().default(DEFAULT_MODEL),
   rerollSameExpression: z.boolean().default(true),
-  cacheDir: z.string().optional(),
 })
 
 declare module '@deepseek-ai/dsh-session/types' {
@@ -79,7 +77,7 @@ function requiredText(value: unknown, field: string): string {
  */
 export function apply(ctx: Context, config: Config): void {
   const store = new WorkspaceExpressionStore()
-  const classifier = new EmotionClassifier(config.modelId, config.cacheDir ?? join(homedir(), '.dsh', 'models', 'deep-tavern'))
+  const classifier = new EmotionClassifier(config.modelId, join(homedir(), '.dsh', 'models', 'deep-tavern'))
   const previousSprites = new Map<string, { label: ExpressionLabel; id: string }>()
   if (config.enabled) void classifier.warm().catch(error => ctx.logger.warn(`[deep-tavern] classifier unavailable: ${String(error)}`))
 
