@@ -1,6 +1,6 @@
 {
   "name": "dsh-deep-tavern",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A SillyTavern-inspired Character Chat view and backend expression classifier for DeepSeek Harness.",
   "type": "module",
   "main": "dist/index.js",
