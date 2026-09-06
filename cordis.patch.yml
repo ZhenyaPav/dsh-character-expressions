@@ -1,0 +1,7 @@
+- insert:
+    - id: deep-tavern
+      name: dsh-deep-tavern
+      config:
+        modelId: Cohee/distilbert-base-uncased-go-emotions-onnx
+        enabled: true
+        rerollSameExpression: true
