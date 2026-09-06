@@ -25,5 +25,5 @@ const client = await build({
   external: ['@deepseek-ai/*', 'react', 'react-dom'],
 })
 const body = client.outputFiles[0].text
-const wrapped = `window.__ModuleLoader__.load({id:"dsh-deep-tavern",factory(require,exports,module){\n${body}\n}});\n`
+const wrapped = `window.__ModuleLoader__.load({id:"dsh-deep-tavern",factory(require){var module={exports:{}};var exports=module.exports;\n${body}\nreturn module.exports}});\n`
 await writeFile('dist/client.js', wrapped)
