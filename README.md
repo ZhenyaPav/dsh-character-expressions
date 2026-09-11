@@ -9,6 +9,7 @@ Deep Tavern is an installable DeepSeek Harness web bundle that adds workspace-sc
 - Backend-only emotion classification with `Cohee/distilbert-base-uncased-go-emotions-onnx` and the 28 GoEmotions labels.
 - A workspace-local expression pack at `.dsh/character-expressions/` with a manifest and opaque image assets.
 - Per-label image upload, ZIP import API, fallback selection, random multiple-sprite selection, and a manual expression picker in the Character sidebar tab.
+- Binary uploads are split into bounded chunks so sprite images and ZIP packs do not exceed ordinary reverse-proxy request limits.
 - A lightweight expression-only DSH event projection; the native Chat keeps ownership of the transcript and all of its extensions.
 - Workspace-scoped expression settings alongside the portrait in the right Sidebar.
 

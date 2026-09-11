@@ -1,6 +1,7 @@
 /** Node host entry for the Deep Tavern bundle. No model dependency reaches the browser entry. */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -53,12 +54,25 @@ function sendJson(res: ServerResponse, status: number, value: unknown): void {
   res.end(JSON.stringify(value))
 }
 
-async function requestJson(req: IncomingMessage): Promise<any> {
+async function requestBytes(req: IncomingMessage, limit: number, tooLarge = 'Request body is too large'): Promise<Buffer> {
+  const declared = Number(req.headers['content-length'] ?? Number.NaN)
+  if (Number.isFinite(declared) && declared > limit) throw new Error(tooLarge)
   const chunks: Buffer[] = []
-  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-  const raw = Buffer.concat(chunks).toString('utf8')
-  if (raw.length > 20 * 1024 * 1024) throw new Error('Request exceeds the 20 MB limit')
-  return JSON.parse(raw)
+  let size = 0
+  for await (const chunk of req) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    size += bytes.length
+    if (size > limit) {
+      req.resume()
+      throw new Error(tooLarge)
+    }
+    chunks.push(bytes)
+  }
+  return Buffer.concat(chunks, size)
+}
+
+async function requestJson(req: IncomingMessage): Promise<any> {
+  return JSON.parse((await requestBytes(req, 64 * 1024)).toString('utf8'))
 }
 
 function query(req: IncomingMessage): URLSearchParams {
@@ -79,6 +93,30 @@ export function apply(ctx: Context, config: Config): void {
   const store = new WorkspaceExpressionStore()
   const classifier = new EmotionClassifier(config.modelId, join(homedir(), '.dsh', 'models', 'deep-tavern'))
   const previousSprites = new Map<string, { label: ExpressionLabel; id: string }>()
+  const uploads = new Map<string, {
+    workspace: string
+    action: 'upload' | 'zip'
+    label?: ExpressionLabel
+    name: string
+    mediaType: string
+    size: number
+    received: number
+    updatedAt: number
+    chunks: Buffer[]
+  }>()
+  const uploadChunkBytes = 512 * 1024
+  const maxUploadBytes = 20 * 1024 * 1024
+  const maxStagedBytes = 64 * 1024 * 1024
+  const expireUploads = (): void => {
+    const cutoff = Date.now() - 10 * 60 * 1000
+    for (const [id, upload] of uploads) if (upload.updatedAt < cutoff) uploads.delete(id)
+  }
+  const uploadFor = (id: string): NonNullable<ReturnType<typeof uploads.get>> => {
+    expireUploads()
+    const upload = uploads.get(id)
+    if (upload === undefined) throw new Error('Upload is unavailable or expired')
+    return upload
+  }
   if (config.enabled) void classifier.warm().catch(error => ctx.logger.warn(`[deep-tavern] classifier unavailable: ${String(error)}`))
 
   ctx.on('session/event', (session: Session, event: any) => {
@@ -134,6 +172,65 @@ export function apply(ctx: Context, config: Config): void {
           res.end(asset.bytes)
           return
         }
+        if (pathname === '/deep-tavern/api/upload/start' && req.method === 'POST') {
+          expireUploads()
+          const body = await requestJson(req)
+          const workspace = requiredText(body.workspace, 'workspace')
+          const action = requiredText(body.action, 'action')
+          if (action !== 'upload' && action !== 'zip') throw new Error('Unknown upload action')
+          const size = Number(body.size)
+          if (!Number.isSafeInteger(size) || size <= 0 || size > maxUploadBytes) throw new Error('Upload exceeds the 20 MB limit')
+          if (uploads.size >= 16) throw new Error('Too many uploads are in progress')
+          const staged = [...uploads.values()].reduce((total, upload) => total + upload.size, 0)
+          if (staged + size > maxStagedBytes) throw new Error('Too many uploads are in progress')
+          const label = action === 'upload' ? requiredText(body.label, 'label').toLowerCase() : undefined
+          if (label !== undefined && !isExpressionLabel(label)) throw new Error('Unknown expression label')
+          const id = randomUUID()
+          uploads.set(id, {
+            workspace,
+            action,
+            ...(label === undefined ? {} : { label }),
+            name: requiredText(body.name, 'name'),
+            mediaType: action === 'upload' ? requiredText(body.mediaType, 'mediaType') : 'application/zip',
+            size,
+            received: 0,
+            updatedAt: Date.now(),
+            chunks: [],
+          })
+          sendJson(res, 201, { uploadId: id, chunkBytes: uploadChunkBytes })
+          return
+        }
+        if (pathname === '/deep-tavern/api/upload/chunk' && req.method === 'POST') {
+          const id = requiredText(query(req).get('id'), 'id')
+          const upload = uploadFor(id)
+          const chunk = await requestBytes(req, uploadChunkBytes, 'Upload chunk is too large')
+          if (chunk.length === 0 || upload.received + chunk.length > upload.size) {
+            uploads.delete(id)
+            throw new Error('Upload size does not match its declaration')
+          }
+          upload.chunks.push(chunk)
+          upload.received += chunk.length
+          upload.updatedAt = Date.now()
+          sendJson(res, 200, { received: upload.received })
+          return
+        }
+        if (pathname === '/deep-tavern/api/upload/finish' && req.method === 'POST') {
+          const id = requiredText((await requestJson(req)).id, 'id')
+          const upload = uploadFor(id)
+          uploads.delete(id)
+          if (upload.received !== upload.size) throw new Error('Upload is incomplete')
+          const bytes = Buffer.concat(upload.chunks, upload.received)
+          const pack = upload.action === 'zip'
+            ? await store.importZip(upload.workspace, bytes)
+            : await store.add(upload.workspace, upload.label!, upload.name, upload.mediaType, bytes)
+          sendJson(res, 200, pack)
+          return
+        }
+        if (pathname === '/deep-tavern/api/upload/cancel' && req.method === 'POST') {
+          uploads.delete(requiredText((await requestJson(req)).id, 'id'))
+          sendJson(res, 200, { ok: true })
+          return
+        }
         if (pathname === '/deep-tavern/api/pack' && req.method === 'POST') {
           const body = await requestJson(req)
           const workspace = requiredText(body.workspace, 'workspace')
@@ -150,17 +247,6 @@ export function apply(ctx: Context, config: Config): void {
           }
           if (action === 'clear') {
             sendJson(res, 200, await store.clear(workspace))
-            return
-          }
-          if (action === 'upload') {
-            const label = requiredText(body.label, 'label').toLowerCase()
-            if (!isExpressionLabel(label)) throw new Error('Unknown expression label')
-            const data = Buffer.from(requiredText(body.data, 'data'), 'base64')
-            sendJson(res, 200, await store.add(workspace, label, requiredText(body.name, 'name'), requiredText(body.mediaType, 'mediaType'), data))
-            return
-          }
-          if (action === 'zip') {
-            sendJson(res, 200, await store.importZip(workspace, Buffer.from(requiredText(body.data, 'data'), 'base64')))
             return
           }
           throw new Error('Unknown pack action')

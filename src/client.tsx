@@ -64,21 +64,24 @@ class ExpressionBuilder {
   private expression: ExpressionRecord | undefined
 
   replace(input: any): ExpressionSnapshot {
-    this.expression = input.nodes
-      .map((node: any) => node.data as ExpressionRecord)
-      .sort((left: ExpressionRecord, right: ExpressionRecord) => left.seq - right.seq)
-      .at(-1)
+    this.expression = latestExpression(input.nodes)
     return { expression: this.expression }
   }
 
   apply(input: any): ExpressionSnapshot {
-    const latest = input.upserts
-      .map((node: any) => node.data as ExpressionRecord)
-      .sort((left: ExpressionRecord, right: ExpressionRecord) => left.seq - right.seq)
-      .at(-1)
+    const latest = latestExpression(input.upserts)
     if (latest !== undefined && (this.expression === undefined || latest.seq > this.expression.seq)) this.expression = latest
     return { expression: this.expression }
   }
+}
+
+function latestExpression(nodes: readonly any[]): ExpressionRecord | undefined {
+  let latest: ExpressionRecord | undefined
+  for (const node of nodes) {
+    const expression = node.data as ExpressionRecord
+    if (latest === undefined || expression.seq > latest.seq) latest = expression
+  }
+  return latest
 }
 
 const expressionViewDefinition: any = {
@@ -106,8 +109,56 @@ interface PackState {
   pack: ExpressionPack | undefined
   loading: boolean
   error: string | undefined
-  refresh: () => Promise<void>
   mutate: (body: Record<string, unknown>) => Promise<void>
+  upload: (action: 'upload' | 'zip', file: File, label?: ExpressionLabel) => Promise<void>
+}
+
+interface PackChange {
+  workspace: string
+  pack: ExpressionPack
+}
+
+function publishPack(workspace: string, pack: ExpressionPack): void {
+  window.dispatchEvent(new CustomEvent<PackChange>('deep-tavern-pack-change', {
+    detail: { workspace, pack },
+  }))
+}
+
+async function uploadPackFile(
+  workspace: string,
+  action: 'upload' | 'zip',
+  file: File,
+  label?: ExpressionLabel,
+): Promise<ExpressionPack> {
+  const started = await apiJson<{ uploadId: string; chunkBytes: number }>('/api/upload/start', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workspace, action, label, name: file.name, mediaType: file.type, size: file.size }),
+  })
+  try {
+    if (!Number.isSafeInteger(started.chunkBytes) || started.chunkBytes <= 0) {
+      throw new Error('Server returned an invalid upload chunk size')
+    }
+    for (let offset = 0; offset < file.size; offset += started.chunkBytes) {
+      await apiJson(`/api/upload/chunk?id=${encodeURIComponent(started.uploadId)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: file.slice(offset, offset + started.chunkBytes),
+      })
+    }
+    return await apiJson('/api/upload/finish', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: started.uploadId }),
+    })
+  } catch (error) {
+    void api('/api/upload/cancel', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: started.uploadId }),
+    })
+    throw error
+  }
 }
 
 function usePack(workspace: string | undefined): PackState {
@@ -133,7 +184,8 @@ function usePack(workspace: string | undefined): PackState {
   useEffect(() => { void refresh() }, [refresh])
   useEffect(() => {
     const onChange = (event: Event) => {
-      if ((event as CustomEvent<string>).detail === workspace) void refresh()
+      const change = (event as CustomEvent<PackChange>).detail
+      if (change.workspace === workspace) setPack(change.pack)
     }
     window.addEventListener('deep-tavern-pack-change', onChange)
     return () => window.removeEventListener('deep-tavern-pack-change', onChange)
@@ -149,14 +201,28 @@ function usePack(workspace: string | undefined): PackState {
       })
       setPack(next)
       setError(undefined)
-      window.dispatchEvent(new CustomEvent('deep-tavern-pack-change', { detail: workspace }))
+      publishPack(workspace, next)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setLoading(false)
     }
   }, [workspace])
-  return { pack, loading, error, refresh, mutate }
+  const upload = useCallback(async (action: 'upload' | 'zip', file: File, label?: ExpressionLabel) => {
+    if (workspace === undefined) return
+    setLoading(true)
+    try {
+      const next = await uploadPackFile(workspace, action, file, label)
+      setPack(next)
+      setError(undefined)
+      publishPack(workspace, next)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setLoading(false)
+    }
+  }, [workspace])
+  return { pack, loading, error, mutate, upload }
 }
 
 function assetUrl(workspace: string | undefined, sprite: Sprite | undefined): string | undefined {
@@ -164,14 +230,17 @@ function assetUrl(workspace: string | undefined, sprite: Sprite | undefined): st
   return `/deep-tavern/assets?workspace=${encodeURIComponent(workspace)}&id=${encodeURIComponent(sprite.id)}`
 }
 
-interface SidebarInjected {
+interface WorkspaceInjected {
   workspace?: string
+}
+
+interface CharacterInjected extends WorkspaceInjected {
   useExpression: (selector: (snapshot: ExpressionSnapshot) => unknown) => any
 }
 
-function CharacterTab({ workspace, sessionId, useExpression }: SidebarInjected & { sessionId: string }) {
+function CharacterTab({ workspace, sessionId, useExpression }: CharacterInjected & { sessionId: string }) {
   const expression = useExpression((snapshot: ExpressionSnapshot) => snapshot.expression) as ExpressionRecord | undefined
-  const { pack, refresh } = usePack(workspace)
+  const { pack } = usePack(workspace)
   const [pickerOpen, setPickerOpen] = useState(false)
   const label = expression?.label
   const candidates = label === undefined || pack === undefined
@@ -188,7 +257,6 @@ function CharacterTab({ workspace, sessionId, useExpression }: SidebarInjected &
       body: JSON.stringify({ sessionId, label: next }),
     })
     setPickerOpen(false)
-    await refresh()
   }
 
   return <section className="deepTavernCharacterTab">
@@ -214,13 +282,6 @@ function CharacterTab({ workspace, sessionId, useExpression }: SidebarInjected &
       {GO_EMOTIONS.every(item => (pack?.sprites[item]?.length ?? 0) === 0) && <p>No expression sprites are configured.</p>}
     </div>}
   </section>
-}
-
-async function fileData(file: File): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer())
-  let binary = ''
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary)
 }
 
 function UploadButton({ label, accept, onFile, children, disabled = false }: {
@@ -287,8 +348,8 @@ function SpriteCard({ label, sprites, workspace, disabled, upload, remove }: {
   </article>
 }
 
-function ExpressionSettingsTab({ workspace }: SidebarInjected) {
-  const { pack, loading, error, mutate } = usePack(workspace)
+function ExpressionSettingsTab({ workspace }: WorkspaceInjected) {
+  const { pack, loading, error, mutate, upload } = usePack(workspace)
   const [status, setStatus] = useState<any>()
   useEffect(() => {
     void apiJson('/api/status').then(setStatus).catch(cause => setStatus({ status: { state: 'error', message: String(cause) } }))
@@ -298,13 +359,6 @@ function ExpressionSettingsTab({ workspace }: SidebarInjected) {
     () => GO_EMOTIONS.filter(label => (pack?.sprites[label]?.length ?? 0) > 0),
     [pack],
   )
-  const upload = async (label: ExpressionLabel, file: File) => {
-    await mutate({ action: 'upload', label, name: file.name, mediaType: file.type, data: await fileData(file) })
-  }
-  const importZip = async (file: File) => {
-    await mutate({ action: 'zip', data: await fileData(file) })
-  }
-
   if (workspace === undefined) {
     return <section className="deepTavernExpressionSettings deepTavernEmptyState">
       <h2>Expression Settings</h2>
@@ -347,7 +401,7 @@ function ExpressionSettingsTab({ workspace }: SidebarInjected) {
         <span>{imageCount} images</span>
       </div>
       <div className="deepTavernPackActions">
-        <UploadButton label="Upload expression sprite pack" accept="application/zip,.zip" disabled={loading} onFile={file => void importZip(file)}>
+        <UploadButton label="Upload expression sprite pack" accept="application/zip,.zip" disabled={loading} onFile={file => void upload('zip', file)}>
           Upload sprite pack (ZIP)
         </UploadButton>
         <button
@@ -370,7 +424,7 @@ function ExpressionSettingsTab({ workspace }: SidebarInjected) {
           sprites={pack?.sprites[label] ?? []}
           workspace={workspace}
           disabled={loading}
-          upload={(nextLabel, file) => { void upload(nextLabel, file) }}
+          upload={(nextLabel, file) => { void upload('upload', file, nextLabel) }}
           remove={id => { void mutate({ action: 'remove', id }) }}
         />)}
       </div>
@@ -411,12 +465,15 @@ export function apply(ctx: Context): void {
     EXPRESSIONS_ID, EXPRESSIONS_KIND, 'Expressions', 'Workspace expression sprite settings', 21,
   )), 'deep-tavern: expression settings sidebar type')
 
-  const injected = (sessionId: string): any => {
+  const workspaceInjected = (sessionId: string): WorkspaceInjected => ({
+    workspace: workspaceFor(ctx, sessionId),
+  })
+  const characterInjected = (sessionId: string): any => {
     const binding = ctx.sessions.binding(sessionId)
     if (binding === undefined) throw new Error(`deep-tavern: unknown session "${sessionId}"`)
     const target = ctx.uiConversation.binding(binding).target(EXPRESSION_TARGET as never) as any
     return {
-      workspace: workspaceFor(ctx, sessionId),
+      ...workspaceInjected(sessionId),
       hooks: {
         expression: {
           getSnapshot: () => target.getSnapshot() ?? EMPTY,
@@ -427,9 +484,9 @@ export function apply(ctx: Context): void {
   }
 
   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
-    { name: 'sidebar.right.pane.tab', key: CHARACTER_ID, inject: injected }, CharacterTab,
+    { name: 'sidebar.right.pane.tab', key: CHARACTER_ID, inject: characterInjected }, CharacterTab,
   )), 'deep-tavern: character sidebar body')
   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
-    { name: 'sidebar.right.pane.tab', key: EXPRESSIONS_ID, inject: injected }, ExpressionSettingsTab,
+    { name: 'sidebar.right.pane.tab', key: EXPRESSIONS_ID, inject: workspaceInjected }, ExpressionSettingsTab,
   )), 'deep-tavern: expression settings sidebar body')
 }

@@ -1,6 +1,6 @@
 {
   "name": "dsh-deep-tavern",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Workspace character expressions and right-sidebar portrait tools for DeepSeek Harness.",
   "type": "module",
   "main": "dist/index.js",
