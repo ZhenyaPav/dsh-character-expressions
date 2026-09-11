@@ -46,3 +46,20 @@ test('nested ZIP entries are rejected before writing a pack', async () => {
   archive.addFile('nested/joy.png', Buffer.from('fixture'))
   await assert.rejects(new WorkspaceExpressionStore().importZip(workspace, archive.toBuffer()), /flat structure/)
 })
+
+test('clear removes every workspace expression override', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'deep-tavern-workspace-'))
+  const store = new WorkspaceExpressionStore()
+  await store.add(workspace, 'joy', 'joy.png', 'image/png', PNG)
+  assert.deepEqual(await store.clear(workspace), { version: 1, fallback: null, sprites: {} })
+  assert.deepEqual(await store.read(workspace), { version: 1, fallback: null, sprites: {} })
+})
+
+test('removing the last fallback sprite clears the fallback selection', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'deep-tavern-workspace-'))
+  const store = new WorkspaceExpressionStore()
+  const pack = await store.add(workspace, 'joy', 'joy.png', 'image/png', PNG)
+  await store.fallback(workspace, 'joy')
+  const next = await store.remove(workspace, pack.sprites.joy![0]!.id)
+  assert.equal(next.fallback, null)
+})

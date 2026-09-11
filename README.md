@@ -1,15 +1,16 @@
 # Deep Tavern
 
-Deep Tavern is an installable DeepSeek Harness web bundle that adds a **Character Chat** view: a SillyTavern-inspired transcript and persistent character portrait stage, without replacing DSH sessions, agents, models, tools, or its composer.
+Deep Tavern is an installable DeepSeek Harness web bundle that adds workspace-scoped character expressions to the native Chat experience through modular right-sidebar tabs. It does not replace DSH sessions, agents, models, tools, the transcript, or its composer.
 
 ## Features
 
-- A selectable Character Chat tab with a large, persistent left portrait rail.
+- A **Character** right-sidebar tab with a large live portrait and manual expression picker.
+- An **Expressions** right-sidebar tab for fallback selection, per-expression image management, ZIP import, and classifier status.
 - Backend-only emotion classification with `Cohee/distilbert-base-uncased-go-emotions-onnx` and the 28 GoEmotions labels.
 - A workspace-local expression pack at `.dsh/character-expressions/` with a manifest and opaque image assets.
-- Per-label image upload, ZIP import API, fallback selection, random multiple-sprite selection, and an in-chat manual expression picker.
-- Full DSH event projection for user/assistant messages, tool calls/results, attempts, live text chunks, and turn completion.
-- A Character Chat settings page with classifier state and the active workspace’s sprite manager.
+- Per-label image upload, ZIP import API, fallback selection, random multiple-sprite selection, and a manual expression picker in the Character sidebar tab.
+- A lightweight expression-only DSH event projection; the native Chat keeps ownership of the transcript and all of its extensions.
+- Workspace-scoped expression settings alongside the portrait in the right Sidebar.
 
 ## Install from a checkout
 
@@ -34,7 +35,7 @@ The backend classifier still uses `onnxruntime-node`. In profiles that block
 all dependency lifecycle scripts, approve that dependency through the profile's
 `pnpm-workspace.yaml` (or `pnpm approve-builds`) before installing.
 
-Open a workspace session, select **Character Chat** from the conversation-view tabs, then open **Settings → Character Chat** to upload expression images. The first model download starts when the bundle loads and is cached under `~/.dsh/models/deep-tavern` by default.
+Open a workspace session, expand the right sidebar, then add **Character** or **Expressions** from its tab guide. Use **Expressions** to upload individual sprites or a flat label-named ZIP. The first model download starts when the bundle loads and is cached under `~/.dsh/models/deep-tavern` by default.
 
 ## Data and privacy
 

@@ -103,7 +103,10 @@ export class WorkspaceExpressionStore {
       if (!contained(root, target)) throw new Error('Invalid stored sprite path')
       await rm(target, { force: true })
     }
-    const next = createPack({ fallback: pack.fallback, sprites })
+    const fallback = pack.fallback !== null && (sprites[pack.fallback]?.length ?? 0) > 0
+      ? pack.fallback
+      : null
+    const next = createPack({ fallback, sprites })
     await this.write(workspace, next)
     return next
   }
@@ -114,6 +117,12 @@ export class WorkspaceExpressionStore {
     const next = createPack({ ...pack, fallback: label })
     await this.write(workspace, next)
     return next
+  }
+
+  /** Remove the complete workspace-local sprite override pack. */
+  async clear(workspace: string): Promise<ExpressionPack> {
+    await rm(directory(workspace), { recursive: true, force: true })
+    return { ...EMPTY_PACK }
   }
 
   /** Import a flat label-named ZIP, rejecting traversal and unknown labels. */

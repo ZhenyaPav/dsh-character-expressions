@@ -148,6 +148,10 @@ export function apply(ctx: Context, config: Config): void {
             sendJson(res, 200, await store.remove(workspace, requiredText(body.id, 'id')))
             return
           }
+          if (action === 'clear') {
+            sendJson(res, 200, await store.clear(workspace))
+            return
+          }
           if (action === 'upload') {
             const label = requiredText(body.label, 'label').toLowerCase()
             if (!isExpressionLabel(label)) throw new Error('Unknown expression label')
