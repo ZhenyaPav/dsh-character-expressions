@@ -6,7 +6,7 @@ import { EMPTY_PACK, createPack, isExpressionLabel, type ExpressionLabel, type E
 
 const ROOT = '.dsh/character-expressions'
 const MANIFEST = 'manifest.json'
-const MAX_IMAGE_BYTES = 15 * 1024 * 1024
+const MAX_IMAGE_BYTES = 50 * 1024 * 1024
 const IMAGE_TYPES: Record<string, string> = {
   'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif',
 }
@@ -69,7 +69,7 @@ export class WorkspaceExpressionStore {
     mediaType: string,
     bytes: Buffer,
   ): Promise<ExpressionPack> {
-    if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) throw new Error('Image exceeds the 15 MB limit')
+    if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) throw new Error('Image exceeds the 50 MB limit')
     const ext = extensionFor(mediaType, name)
     if (mediaTypeOf(bytes) !== mediaType) throw new Error('Image bytes do not match the declared media type')
     const root = directory(workspace)

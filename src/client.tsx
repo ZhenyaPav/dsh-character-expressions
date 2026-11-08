@@ -30,7 +30,7 @@ interface ExpressionSnapshot {
 const EMPTY: ExpressionSnapshot = { expression: undefined }
 
 function expressionOf(event: any): ExpressionRecord | undefined {
-  if (event.type !== 'deep-tavern/expression') return undefined
+  if (event.type !== 'deep-tavern/expression' && event.type !== 'plugin:deep-tavern/expression') return undefined
   return {
     seq: event.seq,
     time: event.time,
@@ -238,10 +238,9 @@ interface CharacterInjected extends WorkspaceInjected {
   useExpression: (selector: (snapshot: ExpressionSnapshot) => unknown) => any
 }
 
-function CharacterTab({ workspace, sessionId, useExpression }: CharacterInjected & { sessionId: string }) {
+function CharacterTab({ workspace, useExpression }: CharacterInjected) {
   const expression = useExpression((snapshot: ExpressionSnapshot) => snapshot.expression) as ExpressionRecord | undefined
   const { pack } = usePack(workspace)
-  const [pickerOpen, setPickerOpen] = useState(false)
   const label = expression?.label
   const candidates = label === undefined || pack === undefined
     ? []
@@ -250,37 +249,8 @@ function CharacterTab({ workspace, sessionId, useExpression }: CharacterInjected
       : pack.fallback === null ? [] : pack.sprites[pack.fallback] ?? []
   const image = candidates.find(sprite => sprite.id === expression?.spriteId) ?? candidates[0]
 
-  const choose = async (next: ExpressionLabel) => {
-    await apiJson('/api/manual-expression', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, label: next }),
-    })
-    setPickerOpen(false)
-  }
-
   return <section className="deepTavernCharacterTab">
-    <button
-      type="button"
-      className="deepTavernPortraitImage"
-      onClick={() => setPickerOpen(value => !value)}
-      aria-label="Choose expression"
-      aria-expanded={pickerOpen}
-    >
-      {image === undefined
-        ? <span>{workspace === undefined ? 'Open a workspace session to configure a character.' : 'No portrait configured'}</span>
-        : <img src={assetUrl(workspace, image)} alt={label ?? 'Character portrait'} />}
-    </button>
-    <div className="deepTavernEmotion">
-      <strong>{label ?? 'No expression yet'}</strong>
-      <span>{expression?.origin === 'manual' ? 'Selected manually' : expression === undefined ? 'Waiting for a reply' : 'Detected from the latest reply'}</span>
-    </div>
-    {pickerOpen && <div className="deepTavernPicker" role="dialog" aria-label="Expression picker">
-      {GO_EMOTIONS.filter(item => (pack?.sprites[item]?.length ?? 0) > 0).map(item => (
-        <button key={item} type="button" onClick={() => void choose(item)}>{item}</button>
-      ))}
-      {GO_EMOTIONS.every(item => (pack?.sprites[item]?.length ?? 0) === 0) && <p>No expression sprites are configured.</p>}
-    </div>}
+    {image !== undefined && <img className="deepTavernPortraitImage" src={assetUrl(workspace, image)} alt={label ?? 'Character portrait'} />}
   </section>
 }
 
@@ -459,7 +429,7 @@ export function apply(ctx: Context): void {
   ctx.uiConversation.views.register(expressionViewDefinition)
 
   ctx.effect(() => ctx.sidebarRightTabs.register(tabDefinition(
-    CHARACTER_ID, CHARACTER_KIND, 'Character', 'Live portrait and expression picker', 20,
+    CHARACTER_ID, CHARACTER_KIND, 'Character', 'Live character sprite', 20,
   )), 'deep-tavern: character sidebar type')
   ctx.effect(() => ctx.sidebarRightTabs.register(tabDefinition(
     EXPRESSIONS_ID, EXPRESSIONS_KIND, 'Expressions', 'Workspace expression sprite settings', 21,

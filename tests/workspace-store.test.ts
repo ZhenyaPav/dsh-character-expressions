@@ -1,12 +1,24 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import AdmZip from 'adm-zip'
 import { WorkspaceExpressionStore } from '../src/workspace-store.ts'
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+test('sprites accept exactly 50 MiB and reject one byte more', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'deep-tavern-upload-limit-'))
+  try {
+    const bytes = Buffer.alloc(50 * 1024 * 1024 + 1)
+    PNG.copy(bytes)
+    const store = new WorkspaceExpressionStore()
+    const pack = await store.add(workspace, 'joy', 'joy.png', 'image/png', bytes.subarray(0, -1))
+    assert.equal((await store.asset(workspace, pack.sprites.joy![0]!.id))!.bytes.length, bytes.length - 1)
+    await assert.rejects(store.add(workspace, 'joy', 'joy.png', 'image/png', bytes), /50 MB limit/)
+  } finally { await rm(workspace, { recursive: true, force: true }) }
+})
 
 test('workspace pack persists opaque assets below the hidden DSH directory', async () => {
   const workspace = await mkdtemp(join(tmpdir(), 'deep-tavern-workspace-'))

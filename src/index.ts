@@ -5,13 +5,13 @@ import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { Session } from '@deepseek-ai/dsh-session'
+import { appendPluginRecord, type Session } from '@deepseek-ai/dsh-session'
 import { DEFAULT_MODEL, EmotionClassifier } from './classifier.ts'
 import { GO_EMOTIONS, chooseSprite, isExpressionLabel, type ExpressionLabel } from './expressions.ts'
 import { WorkspaceExpressionStore } from './workspace-store.ts'
 
 export const name = 'deep-tavern'
-export const inject = ['sessions', 'webServer']
+export const inject = ['sessions', 'webServer', 'connection']
 
 export interface Config {
   enabled: boolean
@@ -26,9 +26,9 @@ export const Config: z<Config> = z.object({
 })
 
 declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
+  interface PluginRecordMap {
     /** The expression selected after a settled assistant response or by the portrait picker. */
-    'deep-tavern/expression': {
+    'plugin:deep-tavern/expression': {
       messageSeq?: number
       label: ExpressionLabel
       score?: number
@@ -105,7 +105,7 @@ export function apply(ctx: Context, config: Config): void {
     chunks: Buffer[]
   }>()
   const uploadChunkBytes = 512 * 1024
-  const maxUploadBytes = 20 * 1024 * 1024
+  const maxUploadBytes = 50 * 1024 * 1024
   const maxStagedBytes = 64 * 1024 * 1024
   const expireUploads = (): void => {
     const cutoff = Date.now() - 10 * 60 * 1000
@@ -133,7 +133,7 @@ export function apply(ctx: Context, config: Config): void {
         config.rerollSameExpression,
       )
       if (sprite !== undefined) previousSprites.set(String(session.id), { label: result.label, id: sprite.id })
-      session.append('deep-tavern/expression', {
+      appendPluginRecord(session, 'plugin:deep-tavern/expression', {
         messageSeq: event.seq,
         label: result.label,
         score: result.score,
@@ -147,6 +147,11 @@ export function apply(ctx: Context, config: Config): void {
     kind: 'prefix',
     path: '/deep-tavern',
     handler: async (req, res) => {
+      const admission = ctx.connection.admit(req)
+      if ('rejection' in admission || admission.peer.principal.kind !== 'owner') {
+        sendJson(res, 403, { error: 'forbidden' })
+        return
+      }
       try {
         const pathname = new URL(req.url ?? '/', 'http://localhost').pathname
         if (pathname === '/deep-tavern/api/status' && req.method === 'GET') {
@@ -179,7 +184,7 @@ export function apply(ctx: Context, config: Config): void {
           const action = requiredText(body.action, 'action')
           if (action !== 'upload' && action !== 'zip') throw new Error('Unknown upload action')
           const size = Number(body.size)
-          if (!Number.isSafeInteger(size) || size <= 0 || size > maxUploadBytes) throw new Error('Upload exceeds the 20 MB limit')
+          if (!Number.isSafeInteger(size) || size <= 0 || size > maxUploadBytes) throw new Error('Upload exceeds the 50 MB limit')
           if (uploads.size >= 16) throw new Error('Too many uploads are in progress')
           const staged = [...uploads.values()].reduce((total, upload) => total + upload.size, 0)
           if (staged + size > maxStagedBytes) throw new Error('Too many uploads are in progress')
@@ -260,7 +265,7 @@ export function apply(ctx: Context, config: Config): void {
           const workspace = session.header.cwd
           const sprite = workspace === undefined ? undefined : chooseSprite(await store.read(workspace), label, undefined, true)
           if (sprite !== undefined) previousSprites.set(String(session.id), { label, id: sprite.id })
-          session.append('deep-tavern/expression', { label, origin: 'manual', ...(sprite === undefined ? {} : { spriteId: sprite.id }) })
+          appendPluginRecord(session, 'plugin:deep-tavern/expression', { label, origin: 'manual', ...(sprite === undefined ? {} : { spriteId: sprite.id }) })
           sendJson(res, 200, { ok: true })
           return
         }
